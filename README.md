@@ -1,216 +1,182 @@
 # COGENT: Bridging PLM Prediction and LLM Reasoning for Explainable ICD Coding
 
-This is the official repository for the paper **"COGENT: Bridging PLM Prediction and LLM Reasoning for Explainable ICD Coding"** (under review at COLM 2026).
+This repository provides code for COGENT, a framework for explainable automatic ICD coding that combines a pretrained language model with LLM-based verification.
+
+## Abstract
+
+Automatic ICD coding requires both broad label coverage and reliable clinical grounding. COGENT follows a two-stage design: a PLM first proposes candidate codes and locates supporting evidence in the clinical note, and a verifier model then re-checks uncertain candidates using structured evidence. This design keeps the recall advantages of PLM-based coding while improving precision through explicit evidence-based verification.
 
 ## Overview
 
-Automated ICD coding is a fundamental task in healthcare informatics. Discriminative Pre-trained Language Model (PLM) based methods achieve high recall but operate as black boxes, while Large Language Models (LLMs) offer reasoning capabilities but are prone to hallucination and underperform in structured multi-label prediction.
+The repository is organized into two components:
 
-**COGENT** is a collaborative framework that bridges PLM prediction and LLM reasoning through a coarse-to-fine pipeline. It operates in three stages:
+- `PLM-ICD`: candidate generation, evidence mining, GPT-assisted seed verification, and SFT data construction.
+- `LLaMA-Factory`: verifier inference built on top of LLaMA-Factory.
 
-<p align="center">
-  <img src="assets/framework.png" width="90%" alt="COGENT Framework"/>
-</p>
+The overall pipeline is:
 
-### Stage 1: Evidence Mining
-- Extracts multi-granularity code-evidence mappings from PLM label-wise attention
-- Operates at both **section-level** (broader clinical context) and **sentence-level** (specific clinical findings)
-- Constructs positive examples (supported codes) and hard negatives (attention-guided false positives)
+1. Train a PLM ICD coder.
+2. Mine evidence from model attention.
+3. Build and verify seed data with GPT.
+4. Construct SFT datasets.
+5. Run verifier inference on candidate codes.
 
-### Stage 2: Reasoning Construction
-- Employs GPT-4o as a teacher to filter noisy mappings and generate reasoning traces on a balanced subset
-- Applies a **consistency filter** that cross-validates attention-based evidence against the teacher LLM's clinical judgment
-- Distills the teacher's reasoning capability into Qwen3-30B to scale to the full dataset
-- Produces **RICE** (Reasoning for ICD Coding with Evidence), a large-scale fine-grained reasoning dataset
+## Repository Structure
 
-### Stage 3: Explainable Verification
-- Fine-tunes Qwen3-4B-Instruct as a verifier on RICE using LoRA
-- Uses **confidence-based routing**: high-confidence PLM predictions are accepted directly; uncertain predictions are routed to the verifier
-- The verifier examines each uncertain code with its localized evidence and produces an accept-or-reject decision with a natural language reasoning trace
+### `PLM-ICD`
 
-## RICE Dataset
+- `train_longformer_icd.sh`: Longformer training launcher.
+- `src/train_longformer_icd.py`: PLM training entrypoint.
+- `src/mine_section_evidence.py`: evidence mining from section-level note structure.
+- `src/mine_sentence_evidence.py`: evidence mining from sentence-level note structure.
+- `scripts/build_*_seed_dataset.py`: seed construction for GPT verification.
+- `scripts/verify_*_seeds_with_gpt.py`: GPT-based seed verification.
+- `scripts/build_*_sft.py`: SFT data generation for verifier or multitask training.
 
-RICE contains **563K code-evidence pairs** covering **5,445 unique ICD codes** across **47,716 clinical notes** from MIMIC-III. It exceeds existing evidence-annotated datasets (MDACE, CodiEsp-X, MedCodER) by 1-2 orders of magnitude.
+### `LLaMA-Factory`
 
-| Property | Value |
-|---|---|
-| Total code-evidence pairs | 563K |
-| Unique ICD codes | 5,445 |
-| Clinical notes | 47,716 |
-| Source | MIMIC-III discharge summaries |
-| Evidence granularity | Section-level + Sentence-level |
-| Includes reasoning traces | Yes |
-
-## Main Results
-
-Overall performance on MIMIC-III and MIMIC-IV (full codes):
-
-| Method | Reasoning | MIMIC-III Mi-F1 | MIMIC-III Mi-P | MIMIC-III Mi-R | MIMIC-IV Mi-F1 | MIMIC-IV Mi-P | MIMIC-IV Mi-R |
-|---|---|---|---|---|---|---|---|
-| LAAT | No | 46.1 | 50.3 | 42.6 | 43.0 | 43.8 | 42.3 |
-| CAML | No | 50.6 | 63.6 | 42.0 | 49.8 | 63.0 | 41.2 |
-| PLM-ICD | No | 58.7 | 55.2 | 62.7 | 57.9 | 59.2 | 56.7 |
-| Direct Prompting | No | 2.7 | 1.9 | 5.2 | 1.3 | 0.9 | 2.8 |
-| Naive SFT | No | 30.4 | 24.4 | 40.4 | 46.4 | 45.5 | 47.4 |
-| Tree Search | No | 10.6 | 10.9 | 10.3 | 11.6 | 10.2 | 13.3 |
-| **COGENT (Ours)** | **Yes** | **59.5** | **58.0** | **61.2** | **58.4** | **60.7** | **56.3** |
-
-COGENT achieves the highest Micro F1 on both datasets while being the only method that provides interpretable reasoning traces for each coding decision.
-
-## Project Structure
-
-```
-COGENT/
-├── README.md
-├── requirements.txt
-├── data/                        # Data preprocessing and splits
-│   ├── mimic3/
-│   └── mimic4/
-├── plm/                         # PLM-ICD classifier (Stage 0)
-│   ├── train.py
-│   └── predict.py
-├── evidence_mining/             # Stage 1: Evidence Mining
-│   ├── extract_attention.py
-│   └── build_candidates.py
-├── reasoning_construction/      # Stage 2: Reasoning Construction
-│   ├── teacher_refinement.py
-│   ├── consistency_filter.py
-│   └── distillation.py
-├── verification/                # Stage 3: Explainable Verification
-│   ├── train_verifier.py
-│   └── inference.py
-├── evaluation/                  # Evaluation scripts
-│   └── metrics.py
-└── configs/                     # Configuration files
-```
+- `run_verifier_inference.py`: verifier inference entrypoint.
+- `run_verifier_inference.sh`: example launcher for verifier inference.
 
 ## Requirements
 
 - Python >= 3.10
-- PyTorch >= 2.0
-- Transformers >= 4.40
-- DeepSpeed
-- vLLM (for efficient LLM inference)
-- Access to MIMIC-III / MIMIC-IV datasets (requires PhysioNet credentialed access)
+- PyTorch
+- transformers
+- datasets
+- accelerate
+- pandas
+- numpy
+- scikit-learn
+- openai
+- vllm
+
+Install the verifier-side package with:
 
 ```bash
-pip install -r requirements.txt
+cd LLaMA-Factory
+pip install -e .
 ```
+
+## Data
+
+This repository does not redistribute MIMIC data or derived clinical artifacts.
+
+To run the pipeline, prepare:
+
+- ICD training files for the PLM stage
+- a structured-note feather file for evidence mining and verifier inference
+- a JSONL file with ICD code descriptions
+
+The PLM training stage expects note text and semicolon-separated ICD labels. The code description file should contain one JSON object per line:
+
+```json
+{"code": "I10", "description": "Essential (primary) hypertension"}
+```
+
+Intermediate artifacts are written under `PLM-ICD/data/` by default, including candidate files, seed datasets, verified seed files, and SFT datasets.
 
 ## Usage
 
-### 1. Data Preprocessing
+### Train the PLM candidate generator
 
-Prepare MIMIC-III/IV discharge summaries following the preprocessing pipeline of [Mullenbach et al. (2018)](https://arxiv.org/abs/1802.05695):
-
-```bash
-python data/preprocess.py --dataset mimic3 --data_dir /path/to/mimic3
-```
-
-### 2. Train PLM-ICD Classifier
-
-Train the PLM-ICD model with Longformer encoder:
+From `PLM-ICD`:
 
 ```bash
-python plm/train.py --dataset mimic3 --epochs 20 --optimizer adamw
+bash train_longformer_icd.sh 0 1 0 /path/to/output_dir
 ```
 
-### 3. Evidence Mining
-
-Extract multi-granularity code-evidence mappings from PLM attention:
+To override the default input paths:
 
 ```bash
-python evidence_mining/extract_attention.py \
-    --model_path checkpoints/plm_icd \
-    --dataset mimic3 \
-    --top_k 100 \
-    --top_m 5
+MODEL_NAME_OR_PATH=/path/to/clinical-longformer \
+TRAIN_FILE=/path/to/train.csv \
+VALIDATION_FILE=/path/to/val.csv \
+CODE_FILE=/path/to/ALL_CODES.txt \
+bash train_longformer_icd.sh 0 1 0 /path/to/output_dir
 ```
 
-### 4. Reasoning Construction
+Arguments:
 
-Run teacher refinement with GPT-4o and distillation:
+1. GPU id
+2. `use_laat` (`0` or `1`)
+3. `from_scratch` (`0` or `1`)
+4. output directory
+
+### Mine evidence
+
+Typical commands:
 
 ```bash
-# Teacher refinement (balanced subset)
-python reasoning_construction/teacher_refinement.py \
-    --candidates data/candidates.json \
-    --output data/refined.json
-
-# Distill to Qwen3-30B
-python reasoning_construction/distillation.py \
-    --refined_data data/refined.json \
-    --base_model Qwen/Qwen3-30B \
-    --output_dir checkpoints/distilled
-
-# Scale to full dataset
-python reasoning_construction/distillation.py \
-    --mode inference \
-    --model_path checkpoints/distilled \
-    --candidates data/remaining_candidates.json \
-    --output data/rice.json
+python src/mine_section_evidence.py ...
+python src/mine_sentence_evidence.py ...
 ```
 
-### 5. Train Verifier
+These scripts take a trained PLM checkpoint together with structured note data and produce evidence-linked candidate files.
 
-Fine-tune Qwen3-4B-Instruct with LoRA on RICE:
+### Build and verify seed datasets
+
+Section-oriented flow:
 
 ```bash
-python verification/train_verifier.py \
-    --base_model Qwen/Qwen3-4B-Instruct \
-    --data_path data/rice.json \
-    --lora_rank 8 \
-    --epochs 5 \
-    --lr 1e-4 \
-    --batch_size 16 \
-    --gradient_accumulation_steps 8 \
-    --max_seq_length 8192 \
-    --deepspeed configs/ds_zero3.json
+python scripts/build_section_seed_dataset.py ...
+python scripts/verify_section_seeds_with_gpt.py ...
 ```
 
-### 6. Inference
-
-Run the full COGENT pipeline:
+Sentence-oriented flow:
 
 ```bash
-python verification/inference.py \
-    --plm_model checkpoints/plm_icd \
-    --verifier_model checkpoints/verifier \
-    --dataset mimic3 \
-    --split test \
-    --tau_ver 0.6
+python scripts/build_sentence_seed_dataset.py ...
+python scripts/verify_sentence_seeds_with_gpt.py ...
 ```
 
-## Key Hyperparameters
+For GPT verification, set:
 
-| Stage | Parameter | Value |
-|---|---|---|
-| Evidence Mining | Top-K attention tokens | 100 |
-| Evidence Mining | Top-M sentences | 5 |
-| Evidence Mining | Hard negative threshold (tau_neg) | 0.3 |
-| Evidence Mining | PLM decision threshold (tau_plm) | 0.3-0.4* |
-| Reasoning Construction | Balanced samples per code (<100 candidates) | 10 |
-| Reasoning Construction | Balanced samples per code (100-500 candidates) | 20 |
-| Reasoning Construction | Balanced samples per code (>500 candidates) | 50 |
-| Verification | Routing threshold (tau_ver) | 0.5-0.7* |
-
-\* Tuned on the validation set to maximize micro-F1.
-
-## Citation
-
-```bibtex
-@inproceedings{cogent2026,
-  title={COGENT: Bridging PLM Prediction and LLM Reasoning for Explainable ICD Coding},
-  author={Anonymous},
-  booktitle={Conference on Language Modeling (COLM)},
-  year={2026}
-}
+```bash
+export AZURE_OPENAI_API_KEY=...
+export AZURE_OPENAI_ENDPOINT=...
 ```
 
-## License
+Optional settings:
 
-This project is for research purposes only. Use of MIMIC data requires a signed data use agreement through [PhysioNet](https://physionet.org/).
+```bash
+export AZURE_OPENAI_API_VERSION=2025-01-01-preview
+export AZURE_OPENAI_MODEL=gpt-4o
+```
 
-## Acknowledgments
+### Build SFT datasets
 
-This work uses de-identified clinical data from MIMIC-III and MIMIC-IV, accessed under a credentialed PhysioNet data use agreement. GPT-4o is used via the Azure OpenAI Service for reasoning trace generation.
+Examples:
+
+```bash
+python scripts/build_section_verifier_sft.py ...
+python scripts/build_sentence_verifier_sft.py ...
+python scripts/build_section_multitask_sft.py ...
+python scripts/build_sentence_multitask_sft.py ...
+python scripts/build_evidence_tasks_sft.py ...
+```
+
+### Run verifier inference
+
+From `LLaMA-Factory`:
+
+```bash
+cd LLaMA-Factory
+FEATHER_FILE=/path/to/structured_notes.feather \
+bash run_verifier_inference.sh
+```
+
+Common overrides:
+
+```bash
+PLM_ICD_ROOT=/path/to/PLM-ICD \
+INPUT_FILE=/path/to/candidates.jsonl \
+ADAPTER_PATH=/path/to/lora_adapter \
+FEATHER_FILE=/path/to/structured_notes.feather \
+bash run_verifier_inference.sh
+```
+
+## Notes
+
+- Some scripts assume outputs from earlier stages already exist.
+- `LLaMA-Factory/data/dataset_info.json` is kept close to upstream and was not rewritten here.
